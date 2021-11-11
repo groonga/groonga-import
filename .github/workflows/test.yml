@@ -20,6 +20,13 @@ jobs:
           # - windows-latest
     runs-on: ${{ matrix.runs-on }}
     steps:
+      - name: Remove needless files
+        run: |
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /home/linuxbrew/.linuxbrew
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/swift
+          docker rmi $(docker image ls -aq)
       - uses: actions/checkout@v2
       - uses: ruby/setup-ruby@v1
         with:
