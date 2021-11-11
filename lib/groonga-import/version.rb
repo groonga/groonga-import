@@ -13,6 +13,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-module GroongaSynonym
-  VERSION = "1.0.1"
+module GroongaImport
+  VERSION = "1.0.0"
 end
