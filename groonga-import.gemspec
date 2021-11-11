@@ -47,6 +47,7 @@ Gem::Specification.new do |spec|
     spec.executables = Dir.glob("*")
   end
 
+  spec.add_runtime_dependency("groonga-command")
   spec.add_runtime_dependency("mysql2")
   spec.add_runtime_dependency("mysql_binlog")
 end
