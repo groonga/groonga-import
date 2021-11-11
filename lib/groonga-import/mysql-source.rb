@@ -25,6 +25,7 @@ module GroongaImport
       config = Config.new(File.join(dir, "config.yaml"))
       @config = config.mysql
       @mapping = config.mapping
+      @secret = Config.new(File.join(dir, "secret.yaml")).mysql
       @status = Status.new(File.join(dir, "status.yaml")).mysql
       @output = output
       @tables = {}
@@ -35,12 +36,13 @@ module GroongaImport
       command_line = ["mysqlbinlog"]
       command_line << "--host=#{@config.host}" if @config.host
       command_line << "--port=#{@config.port}" if @config.port
+      command_line << "--socket=#{@config.socket}" if @config.socket
       if @config.replication_slave_user
         command_line << "--user=#{@config.replication_slave_user}"
       end
-      if @config.replication_slave_password
-        command_line << "--password=#{@config.replication_slave_password}"
-      end
+      password = @secret.replication_slave_password ||
+                 @config.replication_slave_password
+      command_line << "--password=#{password}" if password
       command_line << "--start-position=#{position}" unless position.zero?
       command_line << "--read-from-remote-server"
       command_line << "--raw"
@@ -141,6 +143,7 @@ module GroongaImport
       options = {}
       options[:host] = @config.host if @config.host
       options[:port] = @config.port if @config.port
+      options[:socket] = @config.socket if @config.socket
       options[:username] = user if user
       options[:password] = password if password
       yield(Mysql2::Client.new(**options))
@@ -153,6 +156,7 @@ module GroongaImport
         file = nil
         position = 0
         mysql(@config.replication_client_user,
+              @secret.replication_client_password ||
               @config.replication_client_password) do |client|
           result = client.query("SHOW MASTER STATUS").first
           file = result["File"]
@@ -166,7 +170,7 @@ module GroongaImport
       return @tables[table_name] if @tables.key?(table_name)
 
       mysql(@config.select_user,
-            @config.select_password) do |client|
+            @secret.select_password || @config.select_password) do |client|
         statement = client.prepare(<<~SQL)
           SELECT column_name,
                  ordinal_position,

@@ -20,7 +20,11 @@ require_relative "mapping"
 module GroongaImport
   class Config
     def initialize(path)
-      @data = YAML.load(File.read(path))
+      if File.exist?(path)
+        @data = YAML.load(File.read(path))
+      else
+        @data = {}
+      end
     end
 
     def mysql
@@ -37,11 +41,15 @@ module GroongaImport
       end
 
       def host
-        @data["host"] || "127.0.0.1"
+        @data["host"] || "localhost"
       end
 
       def port
         @data["port"] || 3306
+      end
+
+      def socket
+        @data["socket"]
       end
 
       def user
