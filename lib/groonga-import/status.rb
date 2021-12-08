@@ -20,7 +20,7 @@ module GroongaImport
     def initialize(path)
       @path = path
       if File.exist?(path)
-        @data = File.read(path)
+        @data = YAML.load(File.read(path))
       else
         @data = {}
       end
