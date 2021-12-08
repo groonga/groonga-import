@@ -39,7 +39,7 @@ module GroongaImport
 
     class MySQL
       def initialize(config, data)
-        @config = data
+        @config = config
         @data = data
       end
 
