@@ -28,8 +28,16 @@ module GroongaImport
       columns = (@index[mysql_name] || {})[:columns]
       return nil if columns.nil?
       record = {}
-      columns.each do |name, value_template|
-        record[name.to_sym] = value_template % mysql_data
+      columns.each do |name, options|
+        if options.is_a?(String)
+          value_template = options
+          type = nil
+        else
+          value_template = options["template"]
+          type = options["type"]
+        end
+        value = value_template % mysql_data
+        record[name.to_sym] = cast(value, type)
       end
       record
     end
@@ -49,6 +57,29 @@ module GroongaImport
             columns: source["columns"],
           }
         end
+      end
+    end
+
+    def cast(value, type)
+      case type
+      when nil, "ShortText", "Text", "LongText"
+        value
+      when /\AU?Int(?:8|16|32|64)\z/
+        return 0 if value.empty?
+        Integer(value, 10)
+      when "Float"
+        return 0.0 if value.empty?
+        Float(value)
+      when "Bool"
+        return false if value.empty?
+        case value
+        when "0"
+          false
+        else
+          true
+        end
+      else
+        raise "Unknown type: #{type}"
       end
     end
   end
