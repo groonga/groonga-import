@@ -55,6 +55,8 @@ module GroongaImport
     private
     def import_mysqlbinlog
       file, position = read_current_status
+      @status.update("file" => file,
+                     "position" => position)
       FileUtils.mkdir_p(@binlog_dir)
       local_file = File.join(@binlog_dir, file)
       mysqlbinlog_start_file = file
@@ -122,6 +124,8 @@ module GroongaImport
 
     def import_mysql2_replication
       file, position = read_current_status
+      @status.update("file" => file,
+                     "position" => position)
       mysql(@config.replication_slave_user,
             @secret.replication_slave_password ||
             @config.replication_slave_password) do |client|
@@ -165,27 +169,28 @@ module GroongaImport
                           next_position,
                           &block)
       table = find_table(database_name, table_name)
-      groonga_table = @mapping.groonga_table(table_name)
-      return if groonga_table.nil?
+      source_table = @mapping[database_name, table_name]
+      return if source_table.nil?
 
+      groonga_table = source_table.groonga_table
       target_rows = block.call
       groonga_records = target_rows.collect do |row|
         record = build_record(table, row)
-        @mapping.generate_groonga_record(table_name, record)
+        groonga_table.generate_record(record)
       end
       return if groonga_records.empty?
 
       case type
       when :write_rows_event,
            :update_rows_event
-        @output.puts("load --table #{groonga_table}")
+        @output.puts("load --table #{groonga_table.name}")
         @output.puts("[")
         @output.puts(groonga_records.collect(&:to_json).join(",\n"))
         @output.puts("]")
       when :delete_rows_event
         groonga_records.each do |groonga_record|
           delete = Groonga::Command::Delete.new
-          delete[:table] = groonga_table
+          delete[:table] = groonga_table.name
           delete[:key] = groonga_record[:_key].to_s
           @output.puts(delete.to_command_format)
         end
@@ -247,7 +252,12 @@ module GroongaImport
       options[:socket] = @config.socket if @config.socket
       options[:username] = user if user
       options[:password] = password if password
-      yield(Mysql2::Client.new(**options))
+      client = Mysql2::Client.new(**options)
+      begin
+        yield(client)
+      ensure
+        client.close unless client.closed?
+      end
     end
 
     def read_current_status
@@ -258,12 +268,64 @@ module GroongaImport
         position = 0
         mysql(@config.replication_client_user,
               @secret.replication_client_password ||
-              @config.replication_client_password) do |client|
-          result = client.query("SHOW MASTER STATUS").first
+              @config.replication_client_password) do |replication_client|
+          replication_client.query("FLUSH TABLES WITH READ LOCK")
+          result = replication_client.query("SHOW MASTER STATUS").first
           file = result["File"]
           position = result["Position"]
+          mysql(@config.select_user,
+                @secret.select_password ||
+                @config.select_password) do |select_client|
+            select_client.query("START TRANSACTION " +
+                                "WITH CONSISTENT SNAPSHOT, " +
+                                "READ ONLY")
+            replication_client.close
+            import_existing_data(select_client)
+            select_client.query("ROLLBACK")
+          end
         end
         [file, position]
+      end
+    end
+
+    def import_existing_data(client)
+      @mapping.source_databases.each do |source_database|
+        source_database.source_tables.each do |source_table|
+          statement = client.prepare(<<~SQL)
+            SELECT COUNT(*) AS n_tables
+            FROM information_schema.tables
+            WHERE
+              table_schema = ? AND
+              table_name = ?
+          SQL
+          result = statement.execute(source_database.name,
+                                     source_table.name)
+          next if result.first["n_tables"].zero?
+          full_table_name = "#{source_database.name}.#{source_table.name}"
+          source_column_names = source_table.source_column_names
+          column_list = source_column_names.join(", ")
+          statement = "SELECT #{column_list} FROM #{full_table_name}"
+          result = client.query(statement,
+                                as: :array,
+                                cache_rows: false,
+                                stream: true)
+          @output.puts("load --table #{source_table.groonga_table.name}")
+          @output.print("[")
+          first_record = true
+          result.each do |row_values|
+            row = Hash[source_column_names.zip(row_values)]
+            groonga_record = source_table.groonga_table.generate_record(row)
+            if first_record
+              first_record = false
+            else
+              @output.print(",")
+            end
+            @output.puts
+            @output.print(groonga_record.to_json)
+          end
+          @output.puts
+          @output.puts("]")
+        end
       end
     end
 
@@ -282,8 +344,8 @@ module GroongaImport
             table_schema = ? AND
             table_name = ?
         SQL
-        results = statement.execute(database_name, table_name)
-        columns = results.collect do |column|
+        result = statement.execute(database_name, table_name)
+        columns = result.collect do |column|
           {
             name: column["column_name"],
             ordinal_position: column["ordinal_position"],
