@@ -13,10 +13,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+require "fileutils"
 require "json"
 
 require "groonga/command"
 require "mysql2"
+begin
+  require "mysql2-replication"
+rescue LoadError
+end
 require "mysql_binlog"
 
 module GroongaImport
@@ -27,12 +32,38 @@ module GroongaImport
       @mapping = config.mapping
       @secret = Config.new(File.join(dir, "secret.yaml")).mysql
       @status = Status.new(File.join(dir, "status.yaml")).mysql
+      @binlog_dir = File.join(dir, "binlog")
       @output = output
       @tables = {}
     end
 
     def import
+      case ENV["GROONGA_IMPORT_MYSQL_SOURCE_BACKEND"]
+      when "mysqlbinlog"
+        import_mysqlbinlog
+      when "mysql2-replication"
+        import_mysql2_replication
+      else
+        if Object.const_defined?(:Mysql2Replication)
+          import_mysql2_replication
+        else
+          import_mysqlbinlog
+        end
+      end
+    end
+
+    private
+    def import_mysqlbinlog
       file, position = read_current_status
+      FileUtils.mkdir_p(@binlog_dir)
+      local_file = File.join(@binlog_dir, file)
+      mysqlbinlog_start_file = file
+      loop do
+        next_file = mysqlbinlog_start_file.succ
+        next_local_file = File.join(@binlog_dir, next_file)
+        break unless File.exist?(next_local_file)
+        mysqlbinlog_start_file = next_file
+      end
       command_line = ["mysqlbinlog"]
       command_line << "--host=#{@config.host}" if @config.host
       command_line << "--port=#{@config.port}" if @config.port
@@ -43,73 +74,126 @@ module GroongaImport
       password = @secret.replication_slave_password ||
                  @config.replication_slave_password
       command_line << "--password=#{password}" if password
-      command_line << "--start-position=#{position}" unless position.zero?
       command_line << "--read-from-remote-server"
+      command_line << "--stop-never"
       command_line << "--raw"
-      command_line << "--result-file=#{position}-"
-      command_line << file
+      command_line << "--result-file=#{@binlog_dir}/"
+      command_line << mysqlbinlog_start_file
       spawn_process(*command_line) do |pid, output_read, error_read|
-        _, status = Process.waitpid2(pid)
-        unless status.success?
-          message = "Failed to read binlog: #{command_line.join(' ')}\n"
-          message << error_read.read
-          raise message
-        end
-      end
-      local_file = "#{position}-#{file}"
-      if position.zero?
         reader = MysqlBinlog::BinlogFileReader.new(local_file)
-      else
-        reader = PartialFileReader.new(local_file)
-      end
-      binlog = MysqlBinlog::Binlog.new(reader)
-      binlog.checksum = @config.checksum
-      binlog.each_event do |event|
-        case event[:type]
-        when :write_rows_event_v1,
-             :write_rows_event_v2,
-             :update_rows_event_v1,
-             :update_rows_event_v2
-          table_name = event[:event][:table][:table]
-          table = find_table(event[:event][:table][:db],
-                             table_name)
-          groonga_table = @mapping.groonga_table(table_name)
-          next if groonga_table.nil?
-          groonga_records = event[:event][:row_image].collect do |row_image|
-            record = build_record(table,
-                                  event[:event][:table][:columns],
-                                  row_image[:after][:image])
-            @mapping.generate_groonga_record(table_name, record)
-          end
-          next if groonga_records.empty?
-          @output.puts("load --table #{groonga_table}")
-          @output.puts("[")
-          @output.puts(groonga_records.collect(&:to_json).join(",\n"))
-          @output.puts("]")
-        when :delete_rows_event_v1,
-             :delete_rows_event_v2
-          table_name = event[:event][:table][:table]
-          table = find_table(event[:event][:table][:db],
-                             table_name)
-          groonga_table = @mapping.groonga_table(table_name)
-          next if groonga_table.nil?
-          groonga_records = event[:event][:row_image].collect do |row_image|
-            record = build_record(table,
-                                  event[:event][:table][:columns],
-                                  row_image[:before][:image])
-            @mapping.generate_groonga_record(table_name, record)
-          end
-          groonga_records.each do |groonga_record|
-            delete = Groonga::Command::Delete.new
-            delete[:table] = groonga_table
-            delete[:key] = groonga_record[:_key]
-            @output.puts(delete.to_command_format)
+        reader.tail = true
+        binlog = MysqlBinlog::Binlog.new(reader)
+        binlog.checksum = @config.checksum
+        binlog.each_event do |event|
+          next if event[:position] < position
+          case event[:type]
+          when :rotate_event
+            file = event[:event][:name]
+            position = event[:event][:pos]
+          when :write_rows_event_v1,
+               :write_rows_event_v2,
+               :update_rows_event_v1,
+               :update_rows_event_v2,
+               :delete_rows_event_v1,
+               :delete_rows_event_v2
+            normalized_type = event[:type].to_s.gsub(/_v\d\z/, "").to_sym
+            import_rows_event(normalized_type,
+                              event[:event][:table][:db],
+                              event[:event][:table][:table],
+                              file,
+                              event[:header][:next_position]) do
+              case normalized_type
+              when :write_rows_event,
+                   :update_rows_event
+                event[:event][:row_image].collect do |row_image|
+                  build_row(row_image[:after][:image])
+                end
+              when :delete_rows_event
+                event[:event][:row_image].collect do |row_image|
+                  build_row(row_image[:before][:image])
+                end
+              end
+            end
+            position = event[:header][:next_position]
           end
         end
       end
     end
 
-    private
+    def import_mysql2_replication
+      file, position = read_current_status
+      mysql(@config.replication_slave_user,
+            @secret.replication_slave_password ||
+            @config.replication_slave_password) do |client|
+        replication_client = Mysql2Replication::Client.new(client)
+        replication_client.file_name = file
+        replication_client.start_position = position
+        replication_client.open do
+          replication_client.each do |event|
+            case event
+            when Mysql2Replication::RotateEvent
+              file = event.file_name unless event.next_position.zero?
+            when Mysql2Replication::RowsEvent
+              event_name = event.class.name.split("::").last
+              normalized_type =
+              event_name.scan(/[A-Z][a-z]+/).
+                collect(&:downcase).
+                join("_").
+                to_sym
+              import_rows_event(normalized_type,
+                                event.table_map.database,
+                                event.table_map.table,
+                                file,
+                                event.next_position) do
+                case normalized_type
+                when :update_rows_event
+                  event.updated_rows
+                else
+                  event.rows
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+
+    def import_rows_event(type,
+                          database_name,
+                          table_name,
+                          file,
+                          next_position,
+                          &block)
+      table = find_table(database_name, table_name)
+      groonga_table = @mapping.groonga_table(table_name)
+      return if groonga_table.nil?
+
+      target_rows = block.call
+      groonga_records = target_rows.collect do |row|
+        record = build_record(table, row)
+        @mapping.generate_groonga_record(table_name, record)
+      end
+      return if groonga_records.empty?
+
+      case type
+      when :write_rows_event,
+           :update_rows_event
+        @output.puts("load --table #{groonga_table}")
+        @output.puts("[")
+        @output.puts(groonga_records.collect(&:to_json).join(",\n"))
+        @output.puts("]")
+      when :delete_rows_event
+        groonga_records.each do |groonga_record|
+          delete = Groonga::Command::Delete.new
+          delete[:table] = groonga_table
+          delete[:key] = groonga_record[:_key].to_s
+          @output.puts(delete.to_command_format)
+        end
+      end
+      @status.update("file" => file,
+                     "position" => next_position)
+    end
+
     def spawn_process(*command_line)
       env = {
         "LC_ALL" => "C",
@@ -126,13 +210,30 @@ module GroongaImport
       if block_given?
         begin
           yield(pid, output_read, error_read)
-        ensure
-          output_read.close unless output_read.closed?
-          error_read.close unless error_read.closed?
+        rescue
           begin
-            Process.waitpid2(pid)
+            Process.kill(:TERM, pid)
+            _, status = Process.waitpid(pid)
           rescue SystemCallError
           end
+        ensure
+          begin
+            _, status = Process.waitpid2(pid)
+          rescue SystemCallError
+          else
+            unless status.success?
+              message = "Failed to run: #{command_line.join(' ')}\n"
+              message << "--- output ---\n"
+              message << output_read.read
+              message << "--------------\n"
+              message << "--- error ----\n"
+              message << error_read.read
+              message << "--------------\n"
+              raise message
+            end
+          end
+          output_read.close unless output_read.closed?
+          error_read.close unless error_read.closed?
         end
       else
         [pid, output_read, error_read]
@@ -160,7 +261,7 @@ module GroongaImport
               @config.replication_client_password) do |client|
           result = client.query("SHOW MASTER STATUS").first
           file = result["File"]
-          # position = Integer(result["Position"], 10)
+          position = result["Position"]
         end
         [file, position]
       end
@@ -196,25 +297,22 @@ module GroongaImport
       end
     end
 
-    def build_record(table,
-                     record_columns,
-                     record_values)
-      record = {}
-      record_values.each do |value_pair|
+    def build_row(value_pairs)
+      row = {}
+      value_pairs.each do |value_pair|
         value_pair.each do |column_index, value|
-          record[table[column_index][:name].to_sym] = value
+          row[column_index] = value
         end
       end
-      record
+      row
     end
 
-    class PartialFileReader < MysqlBinlog::BinlogFileReader
-      def verify_magic
+    def build_record(table, row)
+      record = {}
+      row.each do |column_index, value|
+        record[table[column_index][:name].to_sym] = value
       end
-
-      def rewind
-        seek(0)
-      end
+      record
     end
   end
 end
