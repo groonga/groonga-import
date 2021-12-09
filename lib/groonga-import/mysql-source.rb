@@ -317,12 +317,12 @@ module GroongaImport
                                 symbolize_keys: true,
                                 cache_rows: false,
                                 stream: true)
-          @output.puts("load --table #{source_table.groonga_table.name}")
-          @output.print("[")
           first_record = true
           result.each do |row|
             groonga_record = source_table.groonga_table.generate_record(row)
             if first_record
+              @output.puts("load --table #{source_table.groonga_table.name}")
+              @output.print("[")
               first_record = false
             else
               @output.print(",")
@@ -330,10 +330,13 @@ module GroongaImport
             @output.puts
             @output.print(groonga_record.to_json)
           end
-          @output.puts
-          @output.puts("]")
+          unless first_record
+            @output.puts
+            @output.puts("]")
+          end
         end
       end
+      exit(true)
     end
 
     def find_table(database_name, table_name)
