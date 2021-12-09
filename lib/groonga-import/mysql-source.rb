@@ -59,65 +59,60 @@ module GroongaImport
                      "position" => position)
       FileUtils.mkdir_p(@binlog_dir)
       local_file = File.join(@binlog_dir, file)
-      mysqlbinlog_start_file = file
-      loop do
-        next_file = mysqlbinlog_start_file.succ
-        next_local_file = File.join(@binlog_dir, next_file)
-        break unless File.exist?(next_local_file)
-        mysqlbinlog_start_file = next_file
+      unless File.exist?(local_file.succ)
+        command_line = ["mysqlbinlog"]
+        command_line << "--host=#{@config.host}" if @config.host
+        command_line << "--port=#{@config.port}" if @config.port
+        command_line << "--socket=#{@config.socket}" if @config.socket
+        if @config.replication_slave_user
+          command_line << "--user=#{@config.replication_slave_user}"
+        end
+        password = @secret.replication_slave_password ||
+                   @config.replication_slave_password
+        command_line << "--password=#{password}" if password
+        command_line << "--read-from-remote-server"
+        command_line << "--raw"
+        command_line << "--result-file=#{@binlog_dir}/"
+        command_line << file
+        spawn_process(*command_line) do |pid, output_read, error_read|
+          wait_process(pid)
+        end
       end
-      command_line = ["mysqlbinlog"]
-      command_line << "--host=#{@config.host}" if @config.host
-      command_line << "--port=#{@config.port}" if @config.port
-      command_line << "--socket=#{@config.socket}" if @config.socket
-      if @config.replication_slave_user
-        command_line << "--user=#{@config.replication_slave_user}"
-      end
-      password = @secret.replication_slave_password ||
-                 @config.replication_slave_password
-      command_line << "--password=#{password}" if password
-      command_line << "--read-from-remote-server"
-      command_line << "--stop-never"
-      command_line << "--raw"
-      command_line << "--result-file=#{@binlog_dir}/"
-      command_line << mysqlbinlog_start_file
-      spawn_process(*command_line) do |pid, output_read, error_read|
-        reader = MysqlBinlog::BinlogFileReader.new(local_file)
-        reader.tail = true
-        binlog = MysqlBinlog::Binlog.new(reader)
-        binlog.checksum = @config.checksum
-        binlog.each_event do |event|
-          next if event[:position] < position
-          case event[:type]
-          when :rotate_event
-            file = event[:event][:name]
-            position = event[:event][:pos]
-          when :write_rows_event_v1,
-               :write_rows_event_v2,
-               :update_rows_event_v1,
-               :update_rows_event_v2,
-               :delete_rows_event_v1,
-               :delete_rows_event_v2
-            normalized_type = event[:type].to_s.gsub(/_v\d\z/, "").to_sym
-            import_rows_event(normalized_type,
-                              event[:event][:table][:db],
-                              event[:event][:table][:table],
-                              file,
-                              event[:header][:next_position]) do
-              case normalized_type
-              when :write_rows_event,
-                   :update_rows_event
-                event[:event][:row_image].collect do |row_image|
-                  build_row(row_image[:after][:image])
-                end
-              when :delete_rows_event
-                event[:event][:row_image].collect do |row_image|
-                  build_row(row_image[:before][:image])
-                end
+      reader = MysqlBinlog::BinlogFileReader.new(local_file)
+      binlog = MysqlBinlog::Binlog.new(reader)
+      binlog.checksum = @config.checksum
+      binlog.ignore_rotate = true
+      binlog.each_event do |event|
+        next if event[:position] < position
+        case event[:type]
+        when :rotate_event
+          @status.update("file" => event[:event][:name],
+                         "position" => event[:event][:pos])
+        when :write_rows_event_v1,
+             :write_rows_event_v2,
+             :update_rows_event_v1,
+             :update_rows_event_v2,
+             :delete_rows_event_v1,
+             :delete_rows_event_v2
+          normalized_type = event[:type].to_s.gsub(/_v\d\z/, "").to_sym
+          import_rows_event(normalized_type,
+                            event[:event][:table][:db],
+                            event[:event][:table][:table],
+                            file,
+                            event[:header][:next_position]) do
+            case normalized_type
+            when :write_rows_event,
+                 :update_rows_event
+              event[:event][:row_image].collect do |row_image|
+                build_row(row_image[:after][:image])
+              end
+            when :delete_rows_event
+              event[:event][:row_image].collect do |row_image|
+                build_row(row_image[:before][:image])
               end
             end
-            position = event[:header][:next_position]
           end
+          position = event[:header][:next_position]
         end
       end
     end
@@ -199,6 +194,24 @@ module GroongaImport
                      "position" => next_position)
     end
 
+    def wait_process(pid)
+      begin
+        _, status = Process.waitpid2(pid)
+      rescue SystemCallError
+      else
+        unless status.success?
+          message = "Failed to run: #{command_line.join(' ')}\n"
+          message << "--- output ---\n"
+          message << output_read.read
+          message << "--------------\n"
+          message << "--- error ----\n"
+          message << error_read.read
+          message << "--------------\n"
+          raise message
+        end
+      end
+    end
+
     def spawn_process(*command_line)
       env = {
         "LC_ALL" => "C",
@@ -218,25 +231,11 @@ module GroongaImport
         rescue
           begin
             Process.kill(:TERM, pid)
-            _, status = Process.waitpid(pid)
           rescue SystemCallError
           end
+          raise
         ensure
-          begin
-            _, status = Process.waitpid2(pid)
-          rescue SystemCallError
-          else
-            unless status.success?
-              message = "Failed to run: #{command_line.join(' ')}\n"
-              message << "--- output ---\n"
-              message << output_read.read
-              message << "--------------\n"
-              message << "--- error ----\n"
-              message << error_read.read
-              message << "--------------\n"
-              raise message
-            end
-          end
+          wait_process(pid)
           output_read.close unless output_read.closed?
           error_read.close unless error_read.closed?
         end
@@ -260,6 +259,11 @@ module GroongaImport
       end
     end
 
+    def mysql_version(client)
+      version = client.query("SELECT version()", as: :array).first.first
+      Gem::Version.new(version)
+    end
+
     def read_current_status
       if @status.file
         [@status.file, @status.position]
@@ -276,9 +280,12 @@ module GroongaImport
           mysql(@config.select_user,
                 @secret.select_password ||
                 @config.select_password) do |select_client|
-            select_client.query("START TRANSACTION " +
-                                "WITH CONSISTENT SNAPSHOT, " +
-                                "READ ONLY")
+            start_transaction = "START TRANSACTION " +
+                                "WITH CONSISTENT SNAPSHOT"
+            if mysql_version(select_client) >= Gem::Version.new("5.6")
+              start_transaction += ", READ ONLY"
+            end
+            select_client.query(start_transaction)
             replication_client.close
             import_existing_data(select_client)
             select_client.query("ROLLBACK")
@@ -300,20 +307,20 @@ module GroongaImport
           SQL
           result = statement.execute(source_database.name,
                                      source_table.name)
-          next if result.first["n_tables"].zero?
+          n_tables = result.first["n_tables"]
+          statement.close
+          next if n_tables.zero?
           full_table_name = "#{source_database.name}.#{source_table.name}"
           source_column_names = source_table.source_column_names
           column_list = source_column_names.join(", ")
-          statement = "SELECT #{column_list} FROM #{full_table_name}"
-          result = client.query(statement,
-                                as: :array,
+          result = client.query("SELECT #{column_list} FROM #{full_table_name}",
+                                symbolize_keys: true,
                                 cache_rows: false,
                                 stream: true)
           @output.puts("load --table #{source_table.groonga_table.name}")
           @output.print("[")
           first_record = true
-          result.each do |row_values|
-            row = Hash[source_column_names.zip(row_values)]
+          result.each do |row|
             groonga_record = source_table.groonga_table.generate_record(row)
             if first_record
               first_record = false

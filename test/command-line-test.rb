@@ -51,6 +51,7 @@ class CommandLineTest < Test::Unit::TestCase
         "items" => {
           "sources" => [
             {
+              "database" => "importer",
               "table" => "shoes",
               "columns" => {
                 "_key" => "shoes-%{id}",
@@ -111,7 +112,7 @@ class CommandLineTest < Test::Unit::TestCase
     end
   end
 
-  def setup_changes(source_port)
+  def setup_initial_records(source_port)
     client = Mysql2::Client.new(host: "127.0.0.1",
                                 port: source_port,
                                 username: "root")
@@ -124,35 +125,55 @@ class CommandLineTest < Test::Unit::TestCase
       );
     SQL
     client.query("INSERT INTO shoes VALUES " +
-                 "(1, 'shoes A'), " +
-                 "(2, 'shoes B'), " +
-                 "(3, 'shoes C')");
-    client.query("DELETE FROM shoes WHERE id <= 2")
-    client.query("INSERT INTO shoes VALUES (4, 'shoes D')");
-    client.query("UPDATE shoes SET name = 'shoes X' WHERE id = 4");
+                 "(1, 'shoes a'), " +
+                 "(2, 'shoes b'), " +
+                 "(3, 'shoes c')");
+  end
+
+  def setup_changes(source_port)
+    client = Mysql2::Client.new(host: "127.0.0.1",
+                                port: source_port,
+                                username: "root",
+                                database: "importer")
+    client.query("INSERT INTO shoes VALUES " +
+                 "(10, 'shoes A'), " +
+                 "(20, 'shoes B'), " +
+                 "(30, 'shoes C')");
+    client.query("DELETE FROM shoes WHERE id >= 20")
+    client.query("INSERT INTO shoes VALUES (40, 'shoes D')");
+    client.query("UPDATE shoes SET name = 'shoes X' WHERE id = 40");
   end
 
   data(:version, ["5.5", "5.7"])
   def test_mysql
     run_mysqld(data[:version]) do |target_port, source_port, checksum|
       generate_config(target_port, checksum)
+      setup_initial_records(source_port)
+      assert_equal([true, <<-OUTPUT], run_command)
+load --table items
+[
+{"_key":"shoes-1","id":"1","name":"shoes a","source":"shoes"},
+{"_key":"shoes-2","id":"2","name":"shoes b","source":"shoes"},
+{"_key":"shoes-3","id":"3","name":"shoes c","source":"shoes"}
+]
+      OUTPUT
       setup_changes(source_port)
       assert_equal([true, <<-OUTPUT], run_command)
 load --table items
 [
-{"_key":"shoes-1","id":"1","name":"shoes A","source":"shoes"},
-{"_key":"shoes-2","id":"2","name":"shoes B","source":"shoes"},
-{"_key":"shoes-3","id":"3","name":"shoes C","source":"shoes"}
+{"_key":"shoes-10","id":"10","name":"shoes A","source":"shoes"},
+{"_key":"shoes-20","id":"20","name":"shoes B","source":"shoes"},
+{"_key":"shoes-30","id":"30","name":"shoes C","source":"shoes"}
 ]
-delete --key "shoes-1" --table "items"
-delete --key "shoes-2" --table "items"
+delete --key "shoes-20" --table "items"
+delete --key "shoes-30" --table "items"
 load --table items
 [
-{"_key":"shoes-4","id":"4","name":"shoes D","source":"shoes"}
+{"_key":"shoes-40","id":"40","name":"shoes D","source":"shoes"}
 ]
 load --table items
 [
-{"_key":"shoes-4","id":"4","name":"shoes X","source":"shoes"}
+{"_key":"shoes-40","id":"40","name":"shoes X","source":"shoes"}
 ]
       OUTPUT
     end
