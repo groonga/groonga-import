@@ -44,13 +44,20 @@ module GroongaImport
             if template.is_a?(Hash)
               options = template
               template = options["template"]
+              expression = options["expression"]
               type = options["type"]
             else
+              expression = nil
               type = nil
             end
-            groonga_columns << GroongaColumn.new(name, template, type)
-            template.scan(/%{(.*?)}/).flatten.each do |source_column_name|
-              source_column_names << source_column_name.to_sym
+            groonga_columns << GroongaColumn.new(name,
+                                                 template,
+                                                 expression,
+                                                 type)
+            if template
+              template.scan(/%{(.*?)}/).flatten.each do |source_column_name|
+                source_column_names << source_column_name.to_sym
+              end
             end
           end
           source_column_names.uniq!
@@ -119,15 +126,22 @@ module GroongaImport
     class GroongaColumn
       attr_reader :name
       attr_reader :template
+      attr_reader :expression
       attr_reader :type
-      def initialize(name, template, type)
+      def initialize(name, template, expression, type)
         @name = name
         @template = template
+        @expression = expression
         @type = type
       end
 
       def generate_value(source_record)
-        cast(@template % source_record)
+        if @template
+          cast(@template % source_record)
+        else
+          evaluator = ExpressionEvaluator.new(source_record)
+          evaluator.evaluate(@expression)
+        end
       end
 
       private
@@ -152,6 +166,23 @@ module GroongaImport
         else
           raise "Unknown type: #{@type}"
         end
+      end
+    end
+
+    class ExpressionEvaluator
+      def initialize(source_record)
+        @context = BasicObject.new
+        context_singleton_class =
+          Kernel.instance_method(:singleton_class).bind(@context).call
+        source_record.each do |key, value|
+          context_singleton_class.define_method(key) do
+            value
+          end
+        end
+      end
+
+      def evaluate(expression)
+        @context.instance_eval(expression, __FILE__, __LINE__)
       end
     end
   end
