@@ -65,6 +65,7 @@ module GroongaImport
                                            groonga_columns)
           source_table = SourceTable.new(source["table"],
                                          source_column_names,
+                                         source["filter"],
                                          groonga_table)
           source_tables = (raw_source_databases[source["database"]] ||= [])
           source_tables << source_table
@@ -97,10 +98,12 @@ module GroongaImport
     class SourceTable
       attr_reader :name
       attr_reader :source_column_names
+      attr_reader :source_filter
       attr_reader :groonga_table
-      def initialize(name, source_column_names, groonga_table)
+      def initialize(name, source_column_names, source_filter, groonga_table)
         @name = name
         @source_column_names = source_column_names
+        @source_filter = source_filter
         @groonga_table = groonga_table
       end
     end

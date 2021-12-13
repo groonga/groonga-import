@@ -17,19 +17,16 @@ require "optparse"
 
 module GroongaImport
   class CommandLine
-    def initialize(output=nil)
-      @output = output || "-"
+    def initialize
       @dir = "."
     end
 
     def run(args)
       catch do |tag|
         parse_args(args, tag)
-        open_output do |output|
-          source = MySQLSource.new(dir: @dir, output: output)
-          source.import
-          true
-        end
+        source = MySQLSource.new(dir: @dir)
+        source.import
+        true
       end
     end
 
@@ -52,17 +49,6 @@ module GroongaImport
         throw(tag, true)
       end
       parser.parse!(args.dup)
-    end
-
-    def open_output(&block)
-      case @output
-      when "-"
-        yield($stdout)
-      when String
-        File.open(@output, "w", &block)
-      else
-        yield(@output)
-      end
     end
   end
 end

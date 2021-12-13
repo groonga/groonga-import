@@ -13,6 +13,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+require "fileutils"
+require "logger"
 require "yaml"
 
 require_relative "mapping"
@@ -20,8 +22,9 @@ require_relative "mapping"
 module GroongaImport
   class Config
     def initialize(path)
-      if File.exist?(path)
-        @data = YAML.load(File.read(path))
+      @path = path
+      if File.exist?(@path)
+        @data = YAML.load(File.read(@path))
       else
         @data = {}
       end
@@ -33,6 +36,48 @@ module GroongaImport
 
     def mapping
       Mapping.new(@data["mapping"] || {})
+    end
+
+    def binlog_dir
+      @data["binlog_dir"] || "binlog"
+    end
+
+    def delta_dir
+      @data["delta_dir"] || "delta"
+    end
+
+    def logger
+      @logger ||= create_logger
+    end
+
+    def log_path
+      path = File.join(@data["log_dir"] || "log",
+                       "groonga-import.log")
+      File.expand_path(path, File.dirname(@path))
+    end
+
+    def log_age
+      @data["log_age"] || 7
+    end
+
+    def log_max_size
+      @data["log_max_size"] || (1024 * 1024)
+    end
+
+    def log_level
+      @data["log_level"] || "info"
+    end
+
+    private
+    def create_logger
+      path = log_path
+      FileUtils.mkdir_p(File.dirname(path))
+      Logger.new(path,
+                 log_age,
+                 log_max_size,
+                 datetime_format: "%Y-%m-%dT%H:%M:%S.%N",
+                 level: log_level,
+                 progname: "groonga-import")
     end
 
     class MySQL

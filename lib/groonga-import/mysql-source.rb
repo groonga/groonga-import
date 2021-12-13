@@ -13,10 +13,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-require "fileutils"
-require "json"
-
-require "groonga/command"
 require "mysql2"
 begin
   require "mysql2-replication"
@@ -24,16 +20,20 @@ rescue LoadError
 end
 require "mysql_binlog"
 
+require_relative "delta-writer"
+
 module GroongaImport
   class MySQLSource
-    def initialize(dir: ".", output: $stdout)
+    def initialize(dir: ".")
       config = Config.new(File.join(dir, "config.yaml"))
+      @logger = config.logger
+      @binlog_dir = File.expand_path(config.binlog_dir, dir)
+      delta_dir = File.expand_path(config.delta_dir, dir)
+      @delta_writer = DeltaWriter.new(delta_dir)
       @config = config.mysql
       @mapping = config.mapping
       @secret = Config.new(File.join(dir, "secret.yaml")).mysql
       @status = Status.new(File.join(dir, "status.yaml")).mysql
-      @binlog_dir = File.join(dir, "binlog")
-      @output = output
       @tables = {}
     end
 
@@ -121,10 +121,20 @@ module GroongaImport
       file, position = read_current_status
       @status.update("file" => file,
                      "position" => position)
+      is_mysql_56_or_later = mysql(@config.select_user,
+                                   @secret.select_password ||
+                                   @config.select_password) do |select_client|
+        mysql_version(select_client) >= Gem::Version.new("5.6")
+      end
       mysql(@config.replication_slave_user,
             @secret.replication_slave_password ||
             @config.replication_slave_password) do |client|
-        replication_client = Mysql2Replication::Client.new(client)
+        if is_mysql_56_or_later
+          replication_client = Mysql2Replication::Client.new(client)
+        else
+          replication_client = Mysql2Replication::Client.new(client,
+                                                             checksum: "NONE")
+        end
         replication_client.file_name = file
         replication_client.start_position = position
         replication_client.open do
@@ -163,10 +173,10 @@ module GroongaImport
                           file,
                           next_position,
                           &block)
-      table = find_table(database_name, table_name)
       source_table = @mapping[database_name, table_name]
       return if source_table.nil?
 
+      table = find_table(database_name, table_name)
       groonga_table = source_table.groonga_table
       target_rows = block.call
       groonga_records = target_rows.collect do |row|
@@ -178,17 +188,13 @@ module GroongaImport
       case type
       when :write_rows_event,
            :update_rows_event
-        @output.puts("load --table #{groonga_table.name}")
-        @output.puts("[")
-        @output.puts(groonga_records.collect(&:to_json).join(",\n"))
-        @output.puts("]")
+        @delta_writer.write_upserts(groonga_table.name, groonga_records)
       when :delete_rows_event
-        groonga_records.each do |groonga_record|
-          delete = Groonga::Command::Delete.new
-          delete[:table] = groonga_table.name
-          delete[:key] = groonga_record[:_key].to_s
-          @output.puts(delete.to_command_format)
+        groonga_record_keys = groonga_records.collect do |record|
+          record[:_key]
         end
+        @delta_writer.write_deletes(groonga_table.name,
+                                    groonga_record_keys)
       end
       @status.update("file" => file,
                      "position" => next_position)
@@ -313,30 +319,30 @@ module GroongaImport
           full_table_name = "#{source_database.name}.#{source_table.name}"
           source_column_names = source_table.source_column_names
           column_list = source_column_names.join(", ")
-          result = client.query("SELECT #{column_list} FROM #{full_table_name}",
+          select = "SELECT #{column_list} FROM #{full_table_name}"
+          if source_table.source_filter
+            select << " WHERE #{source_table.source_filter}"
+          end
+          result = client.query(select,
                                 symbolize_keys: true,
                                 cache_rows: false,
                                 stream: true)
-          first_record = true
-          result.each do |row|
-            groonga_record = source_table.groonga_table.generate_record(row)
-            if first_record
-              @output.puts("load --table #{source_table.groonga_table.name}")
-              @output.print("[")
-              first_record = false
-            else
-              @output.print(",")
+          groonga_table_name = source_table.groonga_table.name
+          @logger.info("Importing #{groonga_table_name} data " +
+                       "from #{full_table_name}")
+          groonga_records = Enumerator.new do |yielder|
+            result.each do |row|
+              groonga_record = source_table.groonga_table.generate_record(row)
+              yielder << groonga_record
             end
-            @output.puts
-            @output.print(groonga_record.to_json)
           end
-          unless first_record
-            @output.puts
-            @output.puts("]")
-          end
+          @delta_writer.write_upserts(source_table.groonga_table.name,
+                                      groonga_records,
+                                      packed: true)
+          @logger.info("Imported #{groonga_table_name} data " +
+                       "from #{full_table_name}")
         end
       end
-      exit(true)
     end
 
     def find_table(database_name, table_name)

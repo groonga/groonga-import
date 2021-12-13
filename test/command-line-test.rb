@@ -15,11 +15,9 @@
 
 class CommandLineTest < Test::Unit::TestCase
   def run_command(*args)
-    output = StringIO.new
-    command_line = GroongaImport::CommandLine.new(output)
+    command_line = GroongaImport::CommandLine.new
     Dir.chdir(@dir) do
-      success = command_line.run(["--dir=#{@dir}", *args])
-      [success, output.string]
+      command_line.run(["--dir=#{@dir}", *args])
     end
   end
 
@@ -144,21 +142,39 @@ class CommandLineTest < Test::Unit::TestCase
     client.query("UPDATE shoes SET name = 'shoes X' WHERE id = 40");
   end
 
+  def read_packed_table_files(table)
+    data = ""
+    Dir.glob("#{@dir}/delta/data/#{table}/packed/*/*.grn") do |file|
+      data << File.read(file)
+    end
+    data
+  end
+
+  def read_table_files(table)
+    data = ""
+    Dir.glob("#{@dir}/delta/data/#{table}/*.grn") do |file|
+      data << File.read(file)
+    end
+    data
+  end
+
   data(:version, ["5.5", "5.7"])
   def test_mysql
     run_mysqld(data[:version]) do |target_port, source_port, checksum|
       generate_config(target_port, checksum)
       setup_initial_records(source_port)
-      assert_equal([true, <<-OUTPUT], run_command)
+      assert_true(run_command)
+      assert_equal(<<-UPSERT, read_packed_table_files("items"))
 load --table items
 [
 {"_key":"shoes-1","id":"1","name":"shoes a","source":"shoes"},
 {"_key":"shoes-2","id":"2","name":"shoes b","source":"shoes"},
 {"_key":"shoes-3","id":"3","name":"shoes c","source":"shoes"}
 ]
-      OUTPUT
+      UPSERT
       setup_changes(source_port)
-      assert_equal([true, <<-OUTPUT], run_command)
+      assert_true(run_command)
+      assert_equal(<<-DELTA, read_table_files("items"))
 load --table items
 [
 {"_key":"shoes-10","id":"10","name":"shoes A","source":"shoes"},
@@ -175,7 +191,7 @@ load --table items
 [
 {"_key":"shoes-40","id":"40","name":"shoes X","source":"shoes"}
 ]
-      OUTPUT
+      DELTA
     end
   end
 end
