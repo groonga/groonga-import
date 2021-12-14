@@ -24,8 +24,14 @@ module GroongaImport
     def run(args)
       catch do |tag|
         parse_args(args, tag)
-        source = MySQLSource.new(dir: @dir)
-        source.import
+        config = Config.new(@dir)
+        status = Status.new(@dir)
+        sources = []
+        sources << LocalSource.new(config, status) if config.local
+        sources << MySQLSource.new(config, status) if config.mysql
+        sources.each do |source|
+          source.import
+        end
         true
       end
     end

@@ -56,21 +56,23 @@ module GroongaImport
       end
     end
 
-    def write_schema(table, schema)
+    def write_schema(command)
+      write_entry("schema", ".grn") do |output|
+        output.puts(command.to_command_format)
+      end
     end
 
     private
-    def write_data(table, action, packed: false)
+    def write_entry(prefix, suffix, packed: false)
       timestamp = Time.now.utc
-      # TODO: Add support for .parquet
-      base_name = timestamp.strftime("%Y-%m-%d-%H-%M-%S-%N-#{action}.grn")
+      base_name = timestamp.strftime("%Y-%m-%d-%H-%M-%S-%N#{suffix}")
       if packed
-        dir = "#{@dir}/data/#{table}/packed"
+        dir = "#{@dir}/#{prefix}/packed"
         packed_dir_base_name = timestamp.strftime("%Y-%m-%d-%H-%M-%S-%N")
         temporary_path = "#{dir}/.#{packed_dir_base_name}/#{base_name}"
         path = "#{dir}/#{packed_dir_base_name}/#{base_name}"
       else
-        dir = "#{@dir}/data/#{table}"
+        dir = "#{@dir}/#{prefix}"
         temporary_path = "#{dir}/.#{base_name}"
         path = "#{dir}/#{base_name}"
       end
@@ -84,6 +86,11 @@ module GroongaImport
       else
         FileUtils.mv(temporary_path, path)
       end
+    end
+
+    def write_data(table, action, packed: false, &block)
+      # TODO: Add support for .parquet
+      write_entry("data/#{table}", "-#{action}.grn", packed: packed, &block)
     end
   end
 end

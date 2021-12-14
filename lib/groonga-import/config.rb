@@ -21,17 +21,40 @@ require_relative "mapping"
 
 module GroongaImport
   class Config
-    def initialize(path)
-      @path = path
+    module PathResolvable
+      private
+      def resolve_path(path)
+        File.expand_path(path, @dir)
+      end
+    end
+
+    include PathResolvable
+
+    def initialize(dir)
+      @dir = dir
+      @path = File.join(@dir, "config.yaml")
       if File.exist?(@path)
         @data = YAML.load(File.read(@path))
       else
         @data = {}
       end
+      @secret_path = File.join(@dir, "secret.yaml")
+      if File.exist?(@secret_path)
+        @secret_data = YAML.load(File.read(@secret_path))
+      else
+        @secret_data = {}
+      end
     end
 
     def mysql
-      MySQL.new(@data["mysql"] || {})
+      return nil unless @data["mysql"]
+      MySQL.new(@data["mysql"],
+                @secret_data["mysql"] || {})
+    end
+
+    def local
+      return nil unless @data["local"]
+      Local.new(@dir, @data["local"])
     end
 
     def mapping
@@ -39,11 +62,11 @@ module GroongaImport
     end
 
     def binlog_dir
-      @data["binlog_dir"] || "binlog"
+      resolve_path(@data["binlog_dir"] || "binlog")
     end
 
     def delta_dir
-      @data["delta_dir"] || "delta"
+      resolve_path(@data["delta_dir"] || "delta")
     end
 
     def logger
@@ -51,9 +74,8 @@ module GroongaImport
     end
 
     def log_path
-      path = File.join(@data["log_dir"] || "log",
-                       "groonga-import.log")
-      File.expand_path(path, File.dirname(@path))
+      resolve_path(File.join(@data["log_dir"] || "log",
+                             "groonga-import.log"))
     end
 
     def log_age
@@ -69,6 +91,10 @@ module GroongaImport
     end
 
     private
+    def resolve_path(path)
+      File.expand_path(path, @dir)
+    end
+
     def create_logger
       path = log_path
       FileUtils.mkdir_p(File.dirname(path))
@@ -81,8 +107,9 @@ module GroongaImport
     end
 
     class MySQL
-      def initialize(data)
+      def initialize(data, secret_data)
         @data = data
+        @secret_data = secret_data
       end
 
       def host
@@ -102,7 +129,7 @@ module GroongaImport
       end
 
       def password
-        @data["password"]
+        @secret_data["password"] || @data["password"]
       end
 
       def replication_client
@@ -114,7 +141,8 @@ module GroongaImport
       end
 
       def replication_client_password
-        replication_client["password"]
+        (@secret_data["replication_client"] || @secret_data)["password"] ||
+          replication_client["password"]
       end
 
       def replication_slave
@@ -126,7 +154,8 @@ module GroongaImport
       end
 
       def replication_slave_password
-        replication_slave["password"]
+        (@secret_data["replication_slave"] || @secret_data)["password"] ||
+          replication_slave["password"]
       end
 
       def select
@@ -138,13 +167,27 @@ module GroongaImport
       end
 
       def select_password
-        select["password"]
+        (@secret_data["select"] || @secret_data)["password"] ||
+          select["password"]
       end
 
       def checksum
         _checksum = @data["checksum"]
         return nil if _checksum.nil?
         _checksum.to_sym
+      end
+    end
+
+    class Local
+      include PathResolvable
+
+      def initialize(dir, data)
+        @dir = dir
+        @data = data
+      end
+
+      def dir
+        resolve_path(@data["dir"] || "local")
       end
     end
   end

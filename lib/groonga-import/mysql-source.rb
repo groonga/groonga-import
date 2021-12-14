@@ -24,16 +24,13 @@ require_relative "delta-writer"
 
 module GroongaImport
   class MySQLSource
-    def initialize(dir: ".")
-      config = Config.new(File.join(dir, "config.yaml"))
+    def initialize(config, status)
       @logger = config.logger
-      @binlog_dir = File.expand_path(config.binlog_dir, dir)
-      delta_dir = File.expand_path(config.delta_dir, dir)
-      @delta_writer = DeltaWriter.new(delta_dir)
+      @binlog_dir = config.binlog
+      @delta_writer = DeltaWriter.new(config.delta_dir)
       @config = config.mysql
       @mapping = config.mapping
-      @secret = Config.new(File.join(dir, "secret.yaml")).mysql
-      @status = Status.new(File.join(dir, "status.yaml")).mysql
+      @status = status.mysql
       @tables = {}
     end
 
@@ -67,9 +64,9 @@ module GroongaImport
         if @config.replication_slave_user
           command_line << "--user=#{@config.replication_slave_user}"
         end
-        password = @secret.replication_slave_password ||
-                   @config.replication_slave_password
-        command_line << "--password=#{password}" if password
+        if @config.replication_slave_password
+          command_line << "--password=#{@config.replication_slave_password}"
+        end
         command_line << "--read-from-remote-server"
         command_line << "--raw"
         command_line << "--result-file=#{@binlog_dir}/"
@@ -122,12 +119,10 @@ module GroongaImport
       @status.update("file" => file,
                      "position" => position)
       is_mysql_56_or_later = mysql(@config.select_user,
-                                   @secret.select_password ||
                                    @config.select_password) do |select_client|
         mysql_version(select_client) >= Gem::Version.new("5.6")
       end
       mysql(@config.replication_slave_user,
-            @secret.replication_slave_password ||
             @config.replication_slave_password) do |client|
         if is_mysql_56_or_later
           replication_client = Mysql2Replication::Client.new(client)
@@ -277,14 +272,12 @@ module GroongaImport
         file = nil
         position = 0
         mysql(@config.replication_client_user,
-              @secret.replication_client_password ||
               @config.replication_client_password) do |replication_client|
           replication_client.query("FLUSH TABLES WITH READ LOCK")
           result = replication_client.query("SHOW MASTER STATUS").first
           file = result["File"]
           position = result["Position"]
           mysql(@config.select_user,
-                @secret.select_password ||
                 @config.select_password) do |select_client|
             start_transaction = "START TRANSACTION " +
                                 "WITH CONSISTENT SNAPSHOT"
@@ -349,7 +342,7 @@ module GroongaImport
       return @tables[table_name] if @tables.key?(table_name)
 
       mysql(@config.select_user,
-            @secret.select_password || @config.select_password) do |client|
+            @config.select_password) do |client|
         statement = client.prepare(<<~SQL)
           SELECT column_name,
                  ordinal_position,

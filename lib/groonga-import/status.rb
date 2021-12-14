@@ -13,14 +13,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+require "fileutils"
 require "yaml"
 
 module GroongaImport
   class Status
-    def initialize(path)
-      @path = path
-      if File.exist?(path)
-        @data = YAML.load(File.read(path))
+    def initialize(dir)
+      @dir = dir
+      @path = File.join(@dir, "status.yaml")
+      if File.exist?(@path)
+        @data = YAML.load(File.read(@path))
       else
         @data = {}
       end
@@ -28,6 +30,7 @@ module GroongaImport
 
     def update(data)
       @data.update(data)
+      FileUtils.mkdir_p(@dir)
       File.open(@path, "w") do |output|
         output.puts(YAML.dump(@data))
       end
@@ -35,6 +38,10 @@ module GroongaImport
 
     def mysql
       MySQL.new(self, @data["mysql"] || {})
+    end
+
+    def local
+      Local.new(self, @data["local"] || {})
     end
 
     class MySQL
@@ -53,6 +60,21 @@ module GroongaImport
 
       def position
         @data["position"]
+      end
+    end
+
+    class Local
+      def initialize(config, data)
+        @config = config
+        @data = data
+      end
+
+      def update(data)
+        @config.update("local" => data)
+      end
+
+      def number
+        @data["number"]
       end
     end
   end
