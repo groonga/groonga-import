@@ -26,7 +26,7 @@ module GroongaImport
   class MySQLSource
     def initialize(config, status)
       @logger = config.logger
-      @binlog_dir = config.binlog
+      @binlog_dir = config.binlog_dir
       @delta_writer = DeltaWriter.new(config.delta_dir)
       @config = config.mysql
       @mapping = config.mapping
