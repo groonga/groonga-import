@@ -144,7 +144,7 @@ class CommandLineTest < Test::Unit::TestCase
 
   def read_packed_table_files(table)
     data = ""
-    Dir.glob("#{@dir}/delta/data/#{table}/packed/*/*.grn") do |file|
+    Dir.glob("#{@dir}/delta/data/#{table}/packed/*/*.grn").sort.each do |file|
       data << File.read(file)
     end
     data
@@ -152,7 +152,7 @@ class CommandLineTest < Test::Unit::TestCase
 
   def read_table_files(table)
     data = ""
-    Dir.glob("#{@dir}/delta/data/#{table}/*.grn") do |file|
+    Dir.glob("#{@dir}/delta/data/#{table}/*.grn").sort.each do |file|
       data << File.read(file)
     end
     data
