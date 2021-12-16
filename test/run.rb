@@ -23,6 +23,8 @@ require "socket"
 require "stringio"
 require "tmpdir"
 
+require "mysql2"
+
 require "test-unit"
 
 require_relative "../lib/groonga-import"
