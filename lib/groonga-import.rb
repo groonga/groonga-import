@@ -15,7 +15,5 @@
 
 require_relative "groonga-import/command-line"
 require_relative "groonga-import/config"
-require_relative "groonga-import/local-source"
-require_relative "groonga-import/mysql-source"
 require_relative "groonga-import/status"
 require_relative "groonga-import/version"

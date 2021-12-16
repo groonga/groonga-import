@@ -48,6 +48,7 @@ Gem::Specification.new do |spec|
   end
 
   spec.add_runtime_dependency("groonga-command-parser")
-  spec.add_runtime_dependency("mysql2")
-  spec.add_runtime_dependency("mysql_binlog")
+  # spec.add_runtime_dependency("mysql2")
+  # spec.add_runtime_dependency("mysql2-replication")
+  # spec.add_runtime_dependency("mysql_binlog")
 end

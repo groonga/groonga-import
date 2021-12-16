@@ -2,7 +2,7 @@
 
 ## Description
 
-Groonga import provides tools to import data to Groonga from other systems such as MySQL and PostgreSQL.
+Groonga import provides tools to import data to Groonga from other systems such as local file system, MySQL and PostgreSQL.
 
 ## Install
 

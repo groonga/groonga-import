@@ -14,11 +14,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 require "mysql2"
-begin
-  require "mysql2-replication"
-rescue LoadError
-end
-require "mysql_binlog"
 
 require_relative "delta-writer"
 
@@ -37,14 +32,19 @@ module GroongaImport
     def import
       case ENV["GROONGA_IMPORT_MYSQL_SOURCE_BACKEND"]
       when "mysqlbinlog"
+        require "mysql_binlog"
         import_mysqlbinlog
       when "mysql2-replication"
+        require "mysql2-replication"
         import_mysql2_replication
       else
-        if Object.const_defined?(:Mysql2Replication)
-          import_mysql2_replication
-        else
+        begin
+          require "mysql2-replication"
+        rescue LoadError
+          require "mysql_binlog"
           import_mysqlbinlog
+        else
+          import_mysql2_replication
         end
       end
     end

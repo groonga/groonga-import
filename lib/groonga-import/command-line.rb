@@ -27,8 +27,14 @@ module GroongaImport
         config = Config.new(@dir)
         status = Status.new(@dir)
         sources = []
-        sources << LocalSource.new(config, status) if config.local
-        sources << MySQLSource.new(config, status) if config.mysql
+        if config.local
+          require_relative "local-source"
+          sources << LocalSource.new(config, status)
+        end
+        if config.mysql
+          require_relative "mysql-source"
+          sources << MySQLSource.new(config, status)
+        end
         sources.each do |source|
           source.import
         end

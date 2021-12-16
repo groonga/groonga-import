@@ -20,5 +20,8 @@ source "https://rubygems.org/"
 gemspec
 
 gem "bundler"
+gem "mysql2"
+gem "mysql2-replication"
+gem "mysql_binlog"
 gem "rake"
 gem "test-unit"
