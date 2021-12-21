@@ -30,7 +30,7 @@ jobs:
                 ;;
             esac
             tags=ghcr.io/${GITHUB_REPOSITORY}/groonga-import:${version}
-            push="true
+            push="true"
           else
             tags=""
             push="false"
