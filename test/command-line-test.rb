@@ -28,6 +28,10 @@ class CommandLineTest < Test::Unit::TestCase
     end
   end
 
+  def fixture_path(*components)
+    File.join(__dir__, "fixture", *components)
+  end
+
   def generate_config(port, checksum)
     data = {
       "mysql" => {
@@ -73,7 +77,7 @@ class CommandLineTest < Test::Unit::TestCase
   end
 
   def run_mysqld(version)
-    config = YAML.load(File.read("docker-compose.yml"))
+    config = YAML.load(File.read(fixture_path("docker-compose.yml")))
     case version
     when "5.5"
       target_service = "mysql-#{version}-replica"
@@ -89,8 +93,10 @@ class CommandLineTest < Test::Unit::TestCase
     target_port = extract_port(config["services"][target_service])
     source_port = extract_port(config["services"][source_service])
     up_port = extract_port(config["services"][up_service])
-    system("docker-compose", "down")
-    pid = spawn("docker-compose", "up", up_service)
+    pid = Dir.chdir(fixture_path) do
+      system("docker-compose", "down")
+      spawn("docker-compose", "up", up_service)
+    end
     begin
       loop do
         begin
@@ -105,7 +111,9 @@ class CommandLineTest < Test::Unit::TestCase
       end
       yield(target_port, source_port, checksum)
     ensure
-      system("docker-compose", "down")
+      Dir.chdir(fixture_path) do
+        system("docker-compose", "down")
+      end
       Process.waitpid(pid)
     end
   end
