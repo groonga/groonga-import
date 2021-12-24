@@ -59,6 +59,9 @@ class CommandLineTest < Test::Unit::TestCase
                 "_key" => "shoes-%{id}",
                 "id" => "%{id}",
                 "name" => "%{name}",
+                "name_text" => {
+                  "expression" => "html_untag(name)",
+                },
                 "source" => "shoes",
               },
             },
@@ -131,9 +134,9 @@ class CommandLineTest < Test::Unit::TestCase
       );
     SQL
     client.query("INSERT INTO shoes VALUES " +
-                 "(1, 'shoes a'), " +
-                 "(2, 'shoes b'), " +
-                 "(3, 'shoes c')");
+                 "(1, 'shoes <br> a'), " +
+                 "(2, 'shoes <br> b'), " +
+                 "(3, 'shoes <br> c')");
   end
 
   def setup_changes(source_port)
@@ -142,12 +145,12 @@ class CommandLineTest < Test::Unit::TestCase
                                 username: "root",
                                 database: "importer")
     client.query("INSERT INTO shoes VALUES " +
-                 "(10, 'shoes A'), " +
-                 "(20, 'shoes B'), " +
-                 "(30, 'shoes C')");
+                 "(10, 'shoes <br> A'), " +
+                 "(20, 'shoes <br> B'), " +
+                 "(30, 'shoes <br> C')");
     client.query("DELETE FROM shoes WHERE id >= 20")
-    client.query("INSERT INTO shoes VALUES (40, 'shoes D')");
-    client.query("UPDATE shoes SET name = 'shoes X' WHERE id = 40");
+    client.query("INSERT INTO shoes VALUES (40, 'shoes <br> D')");
+    client.query("UPDATE shoes SET name = 'shoes <br> X' WHERE id = 40");
   end
 
   def read_packed_table_files(table)
@@ -175,9 +178,9 @@ class CommandLineTest < Test::Unit::TestCase
       assert_equal(<<-UPSERT, read_packed_table_files("items"))
 load --table items
 [
-{"_key":"shoes-1","id":"1","name":"shoes a","source":"shoes"},
-{"_key":"shoes-2","id":"2","name":"shoes b","source":"shoes"},
-{"_key":"shoes-3","id":"3","name":"shoes c","source":"shoes"}
+{"_key":"shoes-1","id":"1","name":"shoes <br> a","name_text":"shoes  a","source":"shoes"},
+{"_key":"shoes-2","id":"2","name":"shoes <br> b","name_text":"shoes  b","source":"shoes"},
+{"_key":"shoes-3","id":"3","name":"shoes <br> c","name_text":"shoes  c","source":"shoes"}
 ]
       UPSERT
       setup_changes(source_port)
@@ -185,19 +188,19 @@ load --table items
       assert_equal(<<-DELTA, read_table_files("items"))
 load --table items
 [
-{"_key":"shoes-10","id":"10","name":"shoes A","source":"shoes"},
-{"_key":"shoes-20","id":"20","name":"shoes B","source":"shoes"},
-{"_key":"shoes-30","id":"30","name":"shoes C","source":"shoes"}
+{"_key":"shoes-10","id":"10","name":"shoes <br> A","name_text":"shoes  A","source":"shoes"},
+{"_key":"shoes-20","id":"20","name":"shoes <br> B","name_text":"shoes  B","source":"shoes"},
+{"_key":"shoes-30","id":"30","name":"shoes <br> C","name_text":"shoes  C","source":"shoes"}
 ]
 delete --key "shoes-20" --table "items"
 delete --key "shoes-30" --table "items"
 load --table items
 [
-{"_key":"shoes-40","id":"40","name":"shoes D","source":"shoes"}
+{"_key":"shoes-40","id":"40","name":"shoes <br> D","name_text":"shoes  D","source":"shoes"}
 ]
 load --table items
 [
-{"_key":"shoes-40","id":"40","name":"shoes X","source":"shoes"}
+{"_key":"shoes-40","id":"40","name":"shoes <br> X","name_text":"shoes  X","source":"shoes"}
 ]
       DELTA
     end

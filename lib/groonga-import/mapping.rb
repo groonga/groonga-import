@@ -194,8 +194,14 @@ module GroongaImport
     end
 
     class ExpressionEvaluator
+      class Context < BasicObject
+        def html_untag(text)
+          text.gsub(/<.*?>/, "")
+        end
+      end
+
       def initialize(source_record)
-        @context = BasicObject.new
+        @context = Context.new
         context_singleton_class =
           Kernel.instance_method(:singleton_class).bind(@context).call
         source_record.each do |key, value|
