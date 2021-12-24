@@ -95,10 +95,6 @@ module GroongaImport
     end
 
     private
-    def resolve_path(path)
-      File.expand_path(path, @dir)
-    end
-
     def create_logger
       path = log_path
       FileUtils.mkdir_p(File.dirname(path))
