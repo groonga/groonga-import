@@ -166,8 +166,29 @@ module GroongaImport
           else
             true
           end
+        when "Time"
+          case value
+          when /\A(\d{4})-(\d{2})-(\d{2})\ 
+                  (\d{2}):(\d{2}):(\d{2})\ 
+                  ([+-])(\d{2})(\d{2})\z/x
+            match = Regexp.last_match
+            year = Integer(match[1], 10)
+            month = Integer(match[2], 10)
+            day = Integer(match[3], 10)
+            hour = Integer(match[4], 10)
+            minute = Integer(match[5], 10)
+            second = Integer(match[6], 10)
+            timezone_sign = match[7]
+            timezone_hour = match[8]
+            timezone_minute = match[9]
+            timezone = "#{timezone_sign}#{timezone_hour}:#{timezone_minute}"
+            time = Time.new(year, month, day, hour, minute, second, timezone)
+            time.utc.localtime.strftime("%Y-%m-%d %H:%M:%S.%9N")
+          else
+            value
+          end
         else
-          raise "Unknown type: #{@type}"
+          raise "Unknown type: #{@type}: #{value.inspect}"
         end
       end
     end
