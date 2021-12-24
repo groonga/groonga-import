@@ -169,6 +169,13 @@ module GroongaImport
           end
         when "Time"
           case value
+          when /\A(\d{4})-(\d{2})-(\d{2})\z/
+            match = Regexp.last_match
+            year = Integer(match[1], 10)
+            month = Integer(match[2], 10)
+            day = Integer(match[3], 10)
+            time = Time.new(year, month, day)
+            time.strftime("%Y-%m-%d %H:%M:%S.%9N")
           when /\A(\d{4})-(\d{2})-(\d{2})\ 
                   (\d{2}):(\d{2}):(\d{2})\ 
                   ([+-])(\d{2})(\d{2})\z/x
