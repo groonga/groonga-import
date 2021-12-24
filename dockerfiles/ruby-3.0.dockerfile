@@ -48,5 +48,5 @@ RUN rake install
 WORKDIR /
 RUN rm -rf groonga-import
 
-ENTRYPOINT "groonga-import"
+ENTRYPOINT ["groonga-import"]
 CMD ["--server", "--dir=/var/lib/groonga/import"]
