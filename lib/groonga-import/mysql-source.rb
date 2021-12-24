@@ -52,8 +52,6 @@ module GroongaImport
     private
     def import_mysqlbinlog
       file, position = read_current_status
-      @status.update("file" => file,
-                     "position" => position)
       FileUtils.mkdir_p(@binlog_dir)
       local_file = File.join(@binlog_dir, file)
       unless File.exist?(local_file.succ)
@@ -116,8 +114,6 @@ module GroongaImport
 
     def import_mysql2_replication
       file, position = read_current_status
-      @status.update("file" => file,
-                     "position" => position)
       is_mysql_56_or_later = mysql(@config.select_user,
                                    @config.select_password) do |select_client|
         mysql_version(select_client) >= Gem::Version.new("5.6")
@@ -290,6 +286,8 @@ module GroongaImport
             select_client.query("ROLLBACK")
           end
         end
+        @status.update("file" => file,
+                       "position" => position)
         [file, position]
       end
     end
