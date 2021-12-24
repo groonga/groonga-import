@@ -46,6 +46,7 @@ module GroongaImport
               template = options["template"]
               expression = options["expression"]
               type = options["type"]
+              source_column_names.concat(options["source_column_names"] || [])
             else
               expression = nil
               type = nil
