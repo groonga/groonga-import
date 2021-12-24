@@ -90,6 +90,10 @@ module GroongaImport
       @data["log_level"] || "info"
     end
 
+    def polling_interval
+      Float(@data["polling_interval"] || "60")
+    end
+
     private
     def resolve_path(path)
       File.expand_path(path, @dir)

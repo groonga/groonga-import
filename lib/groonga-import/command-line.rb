@@ -19,6 +19,7 @@ module GroongaImport
   class CommandLine
     def initialize
       @dir = "."
+      @server = false
     end
 
     def run(args)
@@ -35,8 +36,12 @@ module GroongaImport
           require_relative "mysql-source"
           sources << MySQLSource.new(config, status)
         end
-        sources.each do |source|
-          source.import
+        loop do
+          sources.each do |source|
+            source.import
+          end
+          break unless @server
+          sleep(config.polling_interval)
         end
         true
       end
@@ -49,6 +54,10 @@ module GroongaImport
                 "Use DIR as directory that has configuration files",
                 "(#{@dir})") do |dir|
         @dir = dir
+      end
+      parser.on("--server",
+                "Run as a server") do
+        @server = true
       end
       parser.on("--version",
                 "Show version and exit") do

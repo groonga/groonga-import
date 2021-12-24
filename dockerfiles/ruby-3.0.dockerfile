@@ -49,4 +49,4 @@ WORKDIR /
 RUN rm -rf groonga-import
 
 ENTRYPOINT "groonga-import"
-CMD ["--dir=/var/lib/groonga/import"]
+CMD ["--server", "--dir=/var/lib/groonga/import"]
