@@ -28,6 +28,10 @@ module GroongaImport
       end
     end
 
+    def [](key)
+      @data[key]
+    end
+
     def update(data)
       @data.update(data)
       FileUtils.mkdir_p(@dir)
@@ -37,44 +41,50 @@ module GroongaImport
     end
 
     def mysql
-      MySQL.new(self, @data["mysql"] || {})
+      MySQL.new(self)
     end
 
     def local
-      Local.new(self, @data["local"] || {})
+      Local.new(self)
     end
 
     class MySQL
-      def initialize(config, data)
-        @config = config
-        @data = data
+      def initialize(status)
+        @status = status
       end
 
-      def update(data)
-        @config.update("mysql" => data)
+      def [](key)
+        (@status["mysql"] || {})[key]
+      end
+
+      def update(new_data)
+        @status.update("mysql" => new_data)
       end
 
       def file
-        @data["file"]
+        self["file"]
       end
 
       def position
-        @data["position"]
+        self["position"]
       end
     end
 
     class Local
-      def initialize(config, data)
-        @config = config
-        @data = data
+      def initialize(status)
+        @status = status
       end
 
-      def update(data)
-        @config.update("local" => data)
+      def [](key)
+        (@status["local"] || {})[key]
+      end
+
+      def update(new_data)
+        @status.update("local" => new_data)
       end
 
       def number
-        @data["number"]
+        self["number"]
       end
     end
   end
