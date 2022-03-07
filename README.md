@@ -1,5 +1,7 @@
 # Groonga import
 
+This is deprecated. Use https://github.com/groonga/groonga-delta instead.
+
 ## Description
 
 Groonga import provides tools to import data to Groonga from other systems such as local file system, MySQL and PostgreSQL.
